@@ -59,6 +59,21 @@ Run the binary using Cargo:
 cargo run
 ```
 
+Or
+
+Once compiled, you can run it directly using your specified parameters:
+
+```bash
+# Encrypting a directory
+cargo run -- encrypt ./my_secrets --password MySuperSecretPassword123
+```
+
+
+```bash
+# Decrypting a directory
+cargo run -- decrypt ./my_secrets --password MySuperSecretPassword123
+```
+
 ### Step-by-Step Prompt Flow:
 
 1. **Target Folder:** Provide the absolute or relative path to the folder you want to secure (e.g., `/home/user/Documents/SecretFolder`).

@@ -7,6 +7,7 @@ use argon2::{
     Argon2,
 };
 use rand::RngCore;
+use std::env;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
@@ -15,35 +16,76 @@ use walkdir::WalkDir;
 // A constant salt for password hashing (In production, store this safely or prepend to files)
 const STATIC_SALT: &[u8] = b"super_secret_salt_123";
 
+fn print_usage() {
+    println!("Usage:");
+    println!("  vault encrypt <folder_path> --password <your_password>");
+    println!("  vault decrypt <folder_path> --password <your_password>");
+}
+
 fn main() -> io::Result<()> {
-    println!("--- Custom Rust Folder Vault ---");
+    let args: Vec<String> = env::args().collect();
 
-    // 1. Get User input
-    println!("Enter target folder path:");
-    let mut folder_path = String::new();
-    io::stdin().read_line(&mut folder_path)?;
-    let folder_path = folder_path.trim();
+    // Variables to store parameters determined either via CLI or Interactive mode
+    let folder_path: String;
+    let password: String;
+    let action: String;
 
-    println!("Enter password:");
-    let mut password = String::new();
-    io::stdin().read_line(&mut password)?;
-    let password = password.trim();
+    // 1. If arguments are provided on the CLI, parse them directly
+    if args.len() > 1 {
+        if args.len() < 5 {
+            print_usage();
+            std::process::exit(1);
+        }
 
-    println!("Choose action: [1] Encrypt (Lock)  [2] Decrypt (Unlock)");
-    let mut action = String::new();
-    io::stdin().read_line(&mut action)?;
-    let action = action.trim();
+        let raw_action = &args[1];
+        folder_path = args[2].clone();
+        let password_flag = &args[3];
+        password = args[4].clone();
+
+        if password_flag != "--password" {
+            eprintln!("Error: Missing parameter flag '--password'");
+            print_usage();
+            std::process::exit(1);
+        }
+
+        action = match raw_action.as_str() {
+            "encrypt" => "1".to_string(),
+            "decrypt" => "2".to_string(),
+            _ => {
+                eprintln!("Error: Unknown action '{}'", raw_action);
+                print_usage();
+                std::process::exit(1);
+            }
+        };
+    } else {
+        // Fall back to original interactive behavior if no arguments are passed
+        println!("--- Custom Rust Folder Vault ---");
+
+        println!("Enter target folder path:");
+        let mut f_path = String::new();
+        io::stdin().read_line(&mut f_path)?;
+        folder_path = f_path.trim().to_string();
+
+        println!("Enter password:");
+        let mut pwd = String::new();
+        io::stdin().read_line(&mut pwd)?;
+        password = pwd.trim().to_string();
+
+        println!("Choose action: [1] Encrypt (Lock)  [2] Decrypt (Unlock)");
+        let mut act = String::new();
+        io::stdin().read_line(&mut act)?;
+        action = act.trim().to_string();
+    }
 
     // 2. Derive a secure key from the password using Argon2
     let mut key = [0u8; 32];
     let argon2 = Argon2::default();
-    // Simple key derivation for demonstration
     let password_bytes = password.as_bytes();
     let salt = SaltString::encode_b64(STATIC_SALT).unwrap();
     if let Ok(hash) = argon2.hash_password(password_bytes, &salt) {
         let hash_output = hash.hash.expect("Failed to retrieve hash output");
 
-        // 2. Convert that specific output to bytes
+        // Convert that specific output to bytes
         let hash_bytes = hash_output.as_bytes();
         key.copy_from_slice(&hash_bytes[..32]);
     } else {
@@ -52,16 +94,16 @@ fn main() -> io::Result<()> {
 
     let cipher = Aes256Gcm::new_from_slice(&key).expect("Invalid key length");
 
-    // 3. Process the directory
-    match action {
+    // 3. Process the directory using the parameters resolved above
+    match action.as_str() {
         "1" => {
             println!("Encrypting files...");
-            process_directory(folder_path, &cipher, true)?;
+            process_directory(&folder_path, &cipher, true)?;
             println!("Folder Locked successfully!");
         }
         "2" => {
             println!("Decrypting files...");
-            process_directory(folder_path, &cipher, false)?;
+            process_directory(&folder_path, &cipher, false)?;
             println!("Folder Unlocked successfully!");
         }
         _ => println!("Invalid action selected."),
