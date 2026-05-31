@@ -57,7 +57,7 @@ For modern standard Linux environments (`Ubuntu / Debian / Mint`), use our high-
 Execute this command in your local machine terminal to query GitHub API asset metadata, pull the latest compiled binary archive automatically, map it into local target binaries, and link global desktop system references:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Imrany/vault_locker/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash
 ```
 
 ### 2. Manual Package Installation Flow
@@ -68,20 +68,20 @@ If you prefer running sandboxed manual packages, fetch the target elements manua
 
 ```bash
 # Fetch the compiled package distribution binary map
-wget https://github.com/Imrany/vault_locker/releases/latest/download/vault-v1.0.0-linux-x86_64.deb
+wget https://github.com/imrany/vault-locker/releases/latest/download/vault-v0.3.0-linux-x86_64.deb
 
 # Install package through standard packaging engines
-sudo apt install ./vault-v1.0.0-linux-x86_64.deb
+sudo apt install ./vault-v0.3.0-linux-x86_64.deb
 ```
 
 #### Option B: Standalone Compressed Tarball (`.tar.gz`)
 
 ```bash
 # Download the high-speed static production container binary layout
-wget https://github.com/Imrany/vault_locker/releases/latest/download/vault-linux-v1.0.0.tar.gz
+wget https://github.com/imrany/vault-locker/releases/latest/download/vault-linux-v0.3.0.tar.gz
 
 # Extract context elements and bind execute privileges to your local binaries path
-tar -xzvf vault-linux-v1.0.0.tar.gz
+tar -xzvf vault-linux-v0.3.0.tar.gz
 sudo mv vault /usr/local/bin/vault
 ```
 
@@ -116,7 +116,7 @@ If you need to completely remove Vault Locker, its desktop metadata layers, and 
 ### One-Liner Uninstallation Script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/imrany/vault_locker/main/scripts/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -- uninstall
 ```
 
 ### Manual Package Clean-up Commands
