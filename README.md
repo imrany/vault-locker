@@ -37,10 +37,7 @@ Vault Locker handles file encryption using an asynchronous, event-driven pattern
 
 ### 2. File Obfuscation & Envelope Metadata Format
 
-* **Cryptographic Name Shuffling:** To prevent side-channel information exposure via structural path leakage, the original directory architecture is flattened. File targets inside a folder have their paths randomized using a high-entropy 16-byte hex generator:
-
-$$\text{Target path} \longrightarrow \text{rand\_hex}(16) + \text{".enc"}$$
-
+* **Cryptographic Name Shuffling:** To prevent side-channel information exposure via structural path leakage, the original directory architecture is flattened. File targets inside a folder have their paths randomized using a high-entropy 16-byte hex generator
 
 * **Envelope Format:** Files are encrypted with individual 12-byte initialization vectors (**Nonces**). The metadata needed to safely reconstruct the file structure later is packed directly into the binary file envelope before the encrypted ciphertext:
 ```text

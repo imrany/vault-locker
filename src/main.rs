@@ -398,11 +398,13 @@ async fn handle_action_picker(app: &mut App, key: KeyCode) -> io::Result<()> {
                     app.password.clear();
                     app.confirm_password.clear();
                     app.screen = Screen::PasswordEntry;
-                    return Ok(());
+                    return Ok(()); // Correctly halts progression here
                 }
             } else if app.action == Action::Decrypt {
                 app.password_error = Some("No vault lock found — folder not encrypted".into());
                 app.flash_timer = Some(Instant::now());
+                // FIX: Added early return here too so it doesn't try to decrypt a non-existent vault
+                app.screen = Screen::PasswordEntry;
                 return Ok(());
             } else {
                 std::fs::write(&lock_path, &hash_string)?;
@@ -528,7 +530,6 @@ async fn handle_action_picker(app: &mut App, key: KeyCode) -> io::Result<()> {
     }
     Ok(())
 }
-
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
 
 fn derive_key(hash_string: &str) -> io::Result<[u8; 32]> {
@@ -679,6 +680,10 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
             Style::default()
                 .fg(Color::Rgb(255, 200, 50))
                 .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  v{}", env!("CARGO_PKG_VERSION")),
+            Style::default(),
         ),
     ]))
     .block(
