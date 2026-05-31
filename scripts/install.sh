@@ -17,6 +17,7 @@ PREFIX="${PREFIX:-/usr/local}"
 BIN_DIR="$PREFIX/bin"
 SHARE_DIR="$PREFIX/share"
 DESKTOP_DIR="$SHARE_DIR/applications"
+CONFIG_FILE="~/.config/vault_locker/.vault_config"
 VERSION=""
 BINARY_ONLY=false
 UNINSTALL=false
@@ -120,7 +121,13 @@ if $UNINSTALL; then
         command -v update-desktop-database &>/dev/null && $SUDO update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
     fi
 
-    # 4. Clean up macOS applications
+    # 3. Clean up Linux desktop hooks
+    if [[ -f "$CONFIG_FILE" ]]; then
+        $SUDO rm -f "$CONFIG_FILE"
+        say "Removed vault configurations: $CONFIG_FILE"
+    fi
+
+    # 5. Clean up macOS applications
     if [[ "$PLATFORM" == "macos" ]] && [[ -d "/Applications/vault.app" ]]; then
         $SUDO rm -rf "/Applications/vault.app"
         say "Purged application container bundle -> /Applications/vault.app"

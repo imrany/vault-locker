@@ -37,17 +37,14 @@ use walkdir::WalkDir;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const STATIC_SALT: &[u8] = b"super_secret_salt_123";
 const LOCK_FILE_NAME: &str = ".vault_lock";
 const TICK_RATE: Duration = Duration::from_millis(50);
-// How many files to process concurrently
 const CONCURRENCY: usize = 8;
 
 // ─── Worker ↔ UI message ──────────────────────────────────────────────────────
 
 #[derive(Debug)]
 struct FileResult {
-    /// Display name shown in the log (original on encrypt, random stem on decrypt input)
     display: String,
     size: u64,
     ok: bool,
@@ -87,25 +84,23 @@ struct App {
     password_error: Option<String>,
     action: Action,
     action_index: usize,
-    // processing
     total_files: usize,
     processed_files: usize,
     active_workers: usize,
-    current_files: Vec<String>, // up to CONCURRENCY names shown live
+    current_files: Vec<String>,
     log: Vec<LogEntry>,
-    // stats
     stats_processed: usize,
     stats_failed: usize,
     stats_bytes: u64,
-    // channel from worker pool → UI
     result_rx: Option<UnboundedReceiver<FileResult>>,
-    // misc
     show_password: bool,
     flash_timer: Option<Instant>,
+    // Persistent Dynamic Salt tracking
+    salt: String,
 }
 
 impl App {
-    fn new() -> io::Result<Self> {
+    fn new(salt: String) -> io::Result<Self> {
         let current_dir = std::env::current_dir()?;
         let mut folders: Vec<PathBuf> = std::fs::read_dir(&current_dir)
             .into_iter()
@@ -141,6 +136,7 @@ impl App {
             result_rx: None,
             show_password: false,
             flash_timer: None,
+            salt,
         })
     }
 
@@ -160,16 +156,74 @@ impl App {
     }
 }
 
+// ─── Key & Config Management ──────────────────────────────────────────────────
+
+fn generate_random_salt() -> String {
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn get_config_path() -> PathBuf {
+    let dev_path = PathBuf::from(".vault_config");
+    if dev_path.exists() {
+        return dev_path;
+    }
+
+    // Attempt to locate standard system environment variable keys
+    let home_var = std::env::var("HOME");
+
+    // ~/.config/vault_locker/.vault_config
+    match home_var {
+        Ok(home_dir) => {
+            let mut path = PathBuf::from(home_dir);
+            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
+                path.push(".config");
+                path.push("vault_locker");
+            }
+            let _ = std::fs::create_dir_all(&path);
+            path.push(".vault_config");
+            path
+        }
+        Err(_) => dev_path, // Fallback safely to current working directory
+    }
+}
+
+fn get_or_create_salt() -> io::Result<String> {
+    let config_path = get_config_path();
+    if config_path.exists() {
+        let salt = std::fs::read_to_string(config_path)?;
+        Ok(salt.trim().to_string())
+    } else {
+        let new_salt = generate_random_salt();
+        std::fs::write(config_path, &new_salt)?;
+        Ok(new_salt)
+    }
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
+    // 1. Explicit Initialization Command
+    if args.len() == 2 && args[1] == "init" {
+        let new_salt = generate_random_salt();
+        std::fs::write(get_config_path(), &new_salt)?;
+        println!("Vault dynamic configurations initialized securely.");
+        println!("Generated system salt: {}", new_salt);
+        return Ok(());
+    }
+
+    // Load or lazily instantiate salt configuration
+    let system_salt = get_or_create_salt()?;
+
     // Route directly to headless layout execution if arguments are fed
     if args.len() > 1 {
         if args.len() < 5 {
             println!("Usage:");
+            println!("  vault init");
             println!("  vault encrypt <folder_path> --password <your_password>");
             println!("  vault decrypt <folder_path> --password <your_password>");
             std::process::exit(1);
@@ -194,10 +248,10 @@ async fn main() -> io::Result<()> {
         let lock_path = folder.join(LOCK_FILE_NAME);
         let argon2 = Argon2::default();
         let password_bytes = password.as_bytes();
-        let salt = SaltString::encode_b64(STATIC_SALT).unwrap();
+        let salt_param = SaltString::encode_b64(system_salt.as_bytes()).unwrap();
 
         let hash_string = argon2
-            .hash_password(password_bytes, &salt)
+            .hash_password(password_bytes, &salt_param)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
             .to_string();
 
@@ -229,6 +283,8 @@ async fn main() -> io::Result<()> {
         println!("--- Headless Vault Engine Initialized ---");
         println!("Target Folder : {}", folder.display());
         println!("Concurrency   : {} tasks", CONCURRENCY);
+        println!("System Salt   : {}", system_salt);
+        // println!("Vault Config  : {}", get_config_path().display());
 
         // Collect files
         let files: Vec<PathBuf> = WalkDir::new(&folder)
@@ -269,13 +325,20 @@ async fn main() -> io::Result<()> {
                 *count += 1;
             }
 
-            let display = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let display = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             let tx2 = tx.clone();
             let key2 = Arc::clone(&key_arc);
             let active2 = Arc::clone(&active);
 
             tokio::spawn(async move {
-                let size = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+                let size = tokio::fs::metadata(&path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
                 let (ok, err_msg) = if encrypt {
                     match encrypt_file(&path, &key2).await {
                         Ok(_) => (true, None),
@@ -293,11 +356,16 @@ async fn main() -> io::Result<()> {
                     *count -= 1;
                 }
 
-                let _ = tx2.send(FileResult { display, size, ok, err: err_msg });
+                let _ = tx2.send(FileResult {
+                    display,
+                    size,
+                    ok,
+                    err: err_msg,
+                });
             });
         }
 
-        drop(tx); // Close original tracking sender
+        drop(tx);
 
         let mut processed = 0;
         let mut failed = 0;
@@ -307,15 +375,31 @@ async fn main() -> io::Result<()> {
             processed += 1;
             if r.ok {
                 total_bytes += r.size;
-                println!("  [{}/{}] Verified: {} ({})", processed, total, r.display, format_size(r.size, BINARY));
+                println!(
+                    "  [{}/{}] Verified: {} ({})",
+                    processed,
+                    total,
+                    r.display,
+                    format_size(r.size, BINARY)
+                );
             } else {
                 failed += 1;
-                eprintln!("  [{}/{}] FAILED  : {} -> {}", processed, total, r.display, r.err.unwrap_or_default());
+                eprintln!(
+                    "  [{}/{}] FAILED  : {} -> {}",
+                    processed,
+                    total,
+                    r.display,
+                    r.err.unwrap_or_default()
+                );
             }
         }
 
         println!("\nOperation Summary Completed.");
-        println!("  Success: {} files ({})", processed - failed, format_size(total_bytes, BINARY));
+        println!(
+            "  Success: {} files ({})",
+            processed - failed,
+            format_size(total_bytes, BINARY)
+        );
         if failed > 0 {
             println!("  Failure: {} files failed structurally", failed);
         }
@@ -329,7 +413,7 @@ async fn main() -> io::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new()?;
+    let mut app = App::new(system_salt)?;
     let result = run_app(&mut terminal, &mut app).await;
 
     terminal::disable_raw_mode()?;
@@ -347,7 +431,6 @@ async fn run_app(
     loop {
         terminal.draw(|f| ui(f, app))?;
 
-        // Non-blocking keyboard poll
         if event::poll(Duration::from_millis(0))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
@@ -359,7 +442,7 @@ async fn run_app(
                 }
 
                 match app.screen {
-                    Screen::FolderPicker => handle_folder_picker(app, key.code),
+                    Screen::FolderPicker => handle_folder_picker(app, key.code)?,
                     Screen::PasswordEntry => handle_password_entry(app, key.code),
                     Screen::ConfirmPassword => handle_confirm_password(app, key.code),
                     Screen::ActionPicker => handle_action_picker(app, key.code).await?,
@@ -373,11 +456,9 @@ async fn run_app(
             }
         }
 
-        // Drain completed file results from worker pool
         if app.screen == Screen::Processing {
             drain_results(app);
             if app.processed_files >= app.total_files && app.active_workers == 0 {
-                // Final drain
                 drain_results(app);
                 let verb = if app.action == Action::Encrypt {
                     "Encrypted"
@@ -390,7 +471,7 @@ async fn run_app(
                         "{} {} file(s) — {}",
                         verb,
                         app.stats_processed,
-                        format_size(app.stats_bytes, BINARY)
+                        format_size(app.stats_bytes, BINARY),
                     ),
                     Color::Yellow,
                 );
@@ -406,7 +487,6 @@ async fn run_app(
             }
         }
 
-        // Flash timer
         if let Some(t) = app.flash_timer {
             if t.elapsed() > Duration::from_millis(1400) {
                 app.flash_timer = None;
@@ -418,10 +498,7 @@ async fn run_app(
     }
 }
 
-/// Pull all pending results off the channel without blocking
 fn drain_results(app: &mut App) {
-    // Take receiver out to avoid holding a mutable borrow on app.result_rx
-    // while also needing to mutate other app fields.
     let mut rx = match app.result_rx.take() {
         Some(rx) => rx,
         None => return,
@@ -432,7 +509,6 @@ fn drain_results(app: &mut App) {
         results.push(r);
     }
 
-    // Restore before mutating app.
     app.result_rx = Some(rx);
 
     let encrypt = app.action == Action::Encrypt;
@@ -456,7 +532,7 @@ fn drain_results(app: &mut App) {
 
 // ─── Input handlers ───────────────────────────────────────────────────────────
 
-fn handle_folder_picker(app: &mut App, key: KeyCode) {
+fn handle_folder_picker(app: &mut App, key: KeyCode) -> io::Result<()> {
     let max = app.folders.len().saturating_sub(1);
     match key {
         KeyCode::Up | KeyCode::Char('k') => {
@@ -467,6 +543,14 @@ fn handle_folder_picker(app: &mut App, key: KeyCode) {
             let cur = app.list_state.selected().unwrap_or(0);
             app.list_state.select(Some((cur + 1).min(max)));
         }
+        // App-wide trigger to rotate and store a brand-new system salt configuration
+        KeyCode::Char('G') => {
+            let new_salt = generate_random_salt();
+            std::fs::write(get_config_path(), &new_salt)?;
+            app.salt = new_salt;
+            app.password_error = Some("🔄 Brand new runtime system salt regenerated!".into());
+            app.flash_timer = Some(Instant::now());
+        }
         KeyCode::Enter => {
             if app.selected_folder().is_some() {
                 app.screen = Screen::PasswordEntry;
@@ -474,6 +558,7 @@ fn handle_folder_picker(app: &mut App, key: KeyCode) {
         }
         _ => {}
     }
+    Ok(())
 }
 
 fn handle_password_entry(app: &mut App, key: KeyCode) {
@@ -540,10 +625,10 @@ async fn handle_action_picker(app: &mut App, key: KeyCode) -> io::Result<()> {
             let lock_path = folder.join(LOCK_FILE_NAME);
             let argon2 = Argon2::default();
             let password_bytes = app.password.as_bytes();
-            let salt = SaltString::encode_b64(STATIC_SALT).unwrap();
+            let salt_param = SaltString::encode_b64(app.salt.as_bytes()).unwrap();
 
             let hash_string = argon2
-                .hash_password(password_bytes, &salt)
+                .hash_password(password_bytes, &salt_param)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
                 .to_string();
 
@@ -567,10 +652,8 @@ async fn handle_action_picker(app: &mut App, key: KeyCode) -> io::Result<()> {
                 std::fs::write(&lock_path, &hash_string)?;
             }
 
-            // Derive AES key once; share via Arc across tasks
             let key = derive_key(&hash_string)?;
             let key = Arc::new(key);
-
             let encrypt = app.action == Action::Encrypt;
 
             // Collect files
@@ -617,14 +700,11 @@ async fn handle_action_picker(app: &mut App, key: KeyCode) -> io::Result<()> {
                 Color::Cyan,
             );
 
-            // Spawn worker pool
             let (tx, rx) = mpsc::unbounded_channel::<FileResult>();
             app.result_rx = Some(rx);
-
             let active = Arc::new(Mutex::new(0usize));
 
             for path in files {
-                // Respect concurrency cap — spin until a slot opens
                 loop {
                     let count = *active.lock().unwrap();
                     if count < CONCURRENCY {
@@ -700,21 +780,14 @@ fn derive_key(hash_string: &str) -> io::Result<[u8; 32]> {
     Ok(key)
 }
 
-/// Generate a cryptographically random 16-byte hex string for the filename stem.
 fn random_hex_name() -> String {
     let mut bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Encrypt `path` → `<random_hex>.enc` in the same directory.
-///
-/// Header written before the nonce:
-///   [name_len: u32 LE] [original_filename bytes]
 async fn encrypt_file(path: &Path, key: &[u8; 32]) -> io::Result<()> {
     let plaintext = fs::read(path).await?;
-
-    // Build header: original filename length + bytes
     let original_name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no filename"))?
@@ -722,40 +795,32 @@ async fn encrypt_file(path: &Path, key: &[u8; 32]) -> io::Result<()> {
     let name_bytes = original_name.as_bytes();
     let name_len = name_bytes.len() as u32;
 
-    // Generate random nonce
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
-    // Encrypt plaintext
     let cipher = Aes256Gcm::new_from_slice(key).expect("key length");
     let ciphertext = cipher
         .encrypt(nonce, plaintext.as_slice())
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
-    // Assemble output: [name_len 4B][name][nonce 12B][ciphertext]
     let mut out = Vec::with_capacity(4 + name_bytes.len() + 12 + ciphertext.len());
     out.extend_from_slice(&name_len.to_le_bytes());
     out.extend_from_slice(name_bytes);
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
 
-    // Write to random filename, then delete original
     let new_path = path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(format!("{}.enc", random_hex_name()));
-
     fs::write(&new_path, out).await?;
     fs::remove_file(path).await?;
     Ok(())
 }
 
-/// Decrypt `path` (a `*.enc` file) → original filename, same directory.
 async fn decrypt_file(path: &Path, key: &[u8; 32]) -> io::Result<()> {
     let contents = fs::read(path).await?;
-
-    // Parse header
     if contents.len() < 4 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -774,7 +839,6 @@ async fn decrypt_file(path: &Path, key: &[u8; 32]) -> io::Result<()> {
     let original_name = std::str::from_utf8(&contents[4..header_end])
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid filename encoding"))?
         .to_string();
-
     let nonce_bytes = &contents[header_end..header_end + 12];
     let ciphertext = &contents[header_end + 12..];
     let nonce = Nonce::from_slice(nonce_bytes);
@@ -787,12 +851,10 @@ async fn decrypt_file(path: &Path, key: &[u8; 32]) -> io::Result<()> {
         )
     })?;
 
-    // Restore original filename, same directory as the .enc file
     let out_path = path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(&original_name);
-
     fs::write(&out_path, plaintext).await?;
     fs::remove_file(path).await?;
     Ok(())
@@ -802,7 +864,6 @@ async fn decrypt_file(path: &Path, key: &[u8; 32]) -> io::Result<()> {
 
 fn ui(f: &mut ratatui::Frame, app: &App) {
     let size = f.size();
-
     f.render_widget(
         Block::default().style(Style::default().bg(Color::Rgb(10, 12, 18))),
         size,
@@ -851,20 +912,18 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
 
 fn render_footer(f: &mut ratatui::Frame, area: Rect, screen: Screen) {
     let hints = match screen {
-        Screen::FolderPicker => " ↑↓  navigate   Enter: select   Esc: quit",
-        Screen::PasswordEntry => " Type password   Tab: show/hide   Enter: confirm   Esc: quit",
-        Screen::ConfirmPassword => " Confirm password   Tab: show/hide   BackTab: back   Esc: quit",
-        Screen::ActionPicker => " ←→  choose action   Enter: run   BackTab: back   Esc: quit",
-        Screen::Processing => " Processing in parallel…  please wait",
-        Screen::Done => " Enter / q  to exit",
+        Screen::FolderPicker => " ↑↓ navigate  Enter: select  G: generate salt  Esc: quit",
+        Screen::PasswordEntry => " Type password  Tab: show/hide  Enter: confirm  Esc: quit",
+        Screen::ConfirmPassword => " Confirm password  Tab: show/hide  BackTab: back  Esc: quit",
+        Screen::ActionPicker => " ←→ choose action  Enter: run  BackTab: back  Esc: quit",
+        Screen::Processing => " Processing in parallel… please wait",
+        Screen::Done => " Enter / q to exit",
     };
     f.render_widget(
         Paragraph::new(hints).style(Style::default().fg(Color::Rgb(70, 80, 100))),
         area,
     );
 }
-
-// ── Folder picker ─────────────────────────────────────────────────────────────
 
 fn render_folder_picker(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let cols = Layout::default()
@@ -913,7 +972,6 @@ fn render_folder_picker(f: &mut ratatui::Frame, area: Rect, app: &App) {
         .highlight_symbol("▶ ");
     f.render_stateful_widget(list, cols[0], &mut state);
 
-    // Info panel
     let info = if let Some(folder) = app.selected_folder() {
         let file_count = WalkDir::new(folder)
             .into_iter()
@@ -965,10 +1023,13 @@ fn render_folder_picker(f: &mut ratatui::Frame, area: Rect, app: &App) {
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  Workers ", Style::default().fg(Color::Rgb(100, 110, 135))),
                 Span::styled(
-                    format!("{} concurrent tasks", CONCURRENCY),
-                    Style::default().fg(Color::Rgb(150, 160, 180)),
+                    "  Active Salt ",
+                    Style::default().fg(Color::Rgb(100, 110, 135)),
+                ),
+                Span::styled(
+                    app.salt.clone(),
+                    Style::default().fg(Color::Rgb(130, 210, 150)),
                 ),
             ]),
         ]
@@ -984,7 +1045,7 @@ fn render_folder_picker(f: &mut ratatui::Frame, area: Rect, app: &App) {
             .block(
                 Block::default()
                     .title(Span::styled(
-                        " Folder Info ",
+                        " System Context ",
                         Style::default().fg(Color::Rgb(100, 180, 255)),
                     ))
                     .borders(Borders::ALL)
@@ -994,9 +1055,22 @@ fn render_folder_picker(f: &mut ratatui::Frame, area: Rect, app: &App) {
             .wrap(Wrap { trim: true }),
         cols[1],
     );
-}
 
-// ── Password entry ────────────────────────────────────────────────────────────
+    if let Some(err) = &app.password_error {
+        if err.contains("salt") {
+            let msg_area = Rect::new(area.x + 2, area.y + area.height - 2, area.width - 4, 1);
+            f.render_widget(
+                Paragraph::new(Span::styled(
+                    format!(" {}", err),
+                    Style::default()
+                        .fg(Color::LightGreen)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                msg_area,
+            );
+        }
+    }
+}
 
 fn render_password(f: &mut ratatui::Frame, area: Rect, app: &App, confirm: bool) {
     let popup_w = 54u16;
@@ -1049,10 +1123,14 @@ fn render_password(f: &mut ratatui::Frame, area: Rect, app: &App, confirm: bool)
         )),
         Line::from(""),
         Line::from(if let Some(err) = &app.password_error {
-            Span::styled(
-                format!("  {}", err),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            )
+            if !err.contains("salt") {
+                Span::styled(
+                    format!("  {}", err),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::raw("")
+            }
         } else {
             Span::raw("")
         }),
@@ -1074,8 +1152,6 @@ fn render_password(f: &mut ratatui::Frame, area: Rect, app: &App, confirm: bool)
         popup_area,
     );
 }
-
-// ── Action picker ─────────────────────────────────────────────────────────────
 
 fn render_action_picker(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let popup_w = 62u16;
@@ -1178,23 +1254,23 @@ fn render_action_picker(f: &mut ratatui::Frame, area: Rect, app: &App) {
     );
 
     if let Some(err) = &app.password_error {
-        let err_area = Rect::new(
-            popup_area.x,
-            popup_area.y + popup_area.height,
-            popup_area.width,
-            1,
-        );
-        f.render_widget(
-            Paragraph::new(Span::styled(
-                format!("  ⚠ {}", err),
-                Style::default().fg(Color::Red),
-            )),
-            err_area,
-        );
+        if !err.contains("salt") {
+            let err_area = Rect::new(
+                popup_area.x,
+                popup_area.y + popup_area.height,
+                popup_area.width,
+                1,
+            );
+            f.render_widget(
+                Paragraph::new(Span::styled(
+                    format!("  ⚠ {}", err),
+                    Style::default().fg(Color::Red),
+                )),
+                err_area,
+            );
+        }
     }
 }
-
-// ── Processing ────────────────────────────────────────────────────────────────
 
 fn render_processing(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let rows = Layout::default()
@@ -1206,10 +1282,9 @@ fn render_processing(f: &mut ratatui::Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    // Gauge
     let pct = app.progress_pct();
     let label = format!(
-        " {}/{} files  ·  {}  ·  {}% ",
+        " {}/{} files · {} · {}% ",
         app.processed_files,
         app.total_files,
         format_size(app.stats_bytes, BINARY),
@@ -1220,6 +1295,8 @@ fn render_processing(f: &mut ratatui::Frame, area: Rect, app: &App) {
     } else {
         "Decrypting"
     };
+
+    // 1. Progress Gauge widget
     f.render_widget(
         Gauge::default()
             .block(
@@ -1244,7 +1321,7 @@ fn render_processing(f: &mut ratatui::Frame, area: Rect, app: &App) {
         rows[0],
     );
 
-    // Active workers panel
+    // 2. Worker lines collector
     let worker_lines: Vec<Line> = {
         let mut lines: Vec<Line> = app
             .current_files
@@ -1257,13 +1334,13 @@ fn render_processing(f: &mut ratatui::Frame, area: Rect, app: &App) {
                 ])
             })
             .collect();
-        // Pad with blanks so the box doesn't resize
         while lines.len() < 2 {
             lines.push(Line::from(""));
         }
         lines
     };
 
+    // 3. Active Workers display
     f.render_widget(
         Paragraph::new(worker_lines).block(
             Block::default()
@@ -1278,6 +1355,7 @@ fn render_processing(f: &mut ratatui::Frame, area: Rect, app: &App) {
         rows[1],
     );
 
+    // 4. Activity Logs
     render_log(f, rows[2], app);
 }
 
@@ -1295,7 +1373,6 @@ fn render_log(f: &mut ratatui::Frame, area: Rect, app: &App) {
             ]))
         })
         .collect();
-
     f.render_widget(
         List::new(items).block(
             Block::default()
@@ -1308,14 +1385,11 @@ fn render_log(f: &mut ratatui::Frame, area: Rect, app: &App) {
     );
 }
 
-// ── Done ──────────────────────────────────────────────────────────────────────
-
 fn render_done(f: &mut ratatui::Frame, area: Rect, app: &App) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(8), Constraint::Min(0)])
         .split(area);
-
     let verb = if app.action == Action::Encrypt {
         "Encryption"
     } else {
@@ -1338,7 +1412,7 @@ fn render_done(f: &mut ratatui::Frame, area: Rect, app: &App) {
         Line::from(""),
         Line::from(vec![
             Span::styled(
-                "  Files processed  : ",
+                "  Files processed : ",
                 Style::default().fg(Color::Rgb(120, 130, 150)),
             ),
             Span::styled(
@@ -1350,7 +1424,7 @@ fn render_done(f: &mut ratatui::Frame, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled(
-                "  Data handled     : ",
+                "  Data handled : ",
                 Style::default().fg(Color::Rgb(120, 130, 150)),
             ),
             Span::styled(
@@ -1362,7 +1436,7 @@ fn render_done(f: &mut ratatui::Frame, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled(
-                "  Workers used     : ",
+                "  Workers used : ",
                 Style::default().fg(Color::Rgb(120, 130, 150)),
             ),
             Span::styled(
@@ -1374,10 +1448,7 @@ fn render_done(f: &mut ratatui::Frame, area: Rect, app: &App) {
         ]),
         if app.stats_failed > 0 {
             Line::from(vec![
-                Span::styled(
-                    "  Failed           : ",
-                    Style::default().fg(Color::Rgb(120, 130, 150)),
-                ),
+                Span::styled(" Failed : ", Style::default().fg(Color::Rgb(120, 130, 150))),
                 Span::styled(
                     app.stats_failed.to_string(),
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
@@ -1385,7 +1456,7 @@ fn render_done(f: &mut ratatui::Frame, area: Rect, app: &App) {
             ])
         } else {
             Line::from(Span::styled(
-                "  No errors  ✓",
+                " No errors ✓",
                 Style::default().fg(Color::Rgb(100, 220, 120)),
             ))
         },
@@ -1403,6 +1474,5 @@ fn render_done(f: &mut ratatui::Frame, area: Rect, app: &App) {
             .alignment(Alignment::Left),
         rows[0],
     );
-
     render_log(f, rows[1], app);
 }
