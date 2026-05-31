@@ -1,0 +1,24 @@
+[package]
+name = "vault_locker"
+version = "0.2.0"
+edition = "2021"
+
+[[bin]]
+name = "vault"
+path = "src/main.rs"
+
+[dependencies]
+aes-gcm     = "0.10"
+argon2      = "0.5"
+crossterm   = { version = "0.27", features = ["event-stream"] }
+rand        = "0.8"
+ratatui     = "0.26"
+walkdir     = "2"
+humansize   = "2"
+unicode-width = "0.1"
+tokio = { version = "1.52.3", features = ["full"] }
+
+[profile.release]
+opt-level   = 3
+strip       = true
+lto         = true
