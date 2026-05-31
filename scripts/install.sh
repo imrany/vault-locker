@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  vault installer — Linux & macOS
+#  vault installer & uninstaller — Linux & macOS
 #  https://github.com/imrany/vault-locker
 #
-#  One-liner (auto-detects OS, downloads the right installer):
-#    curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/main/scripts/install.sh | bash
+#  One-liner Installation:
+#    curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash
 #
-#  Options:
-#    --version v0.5.0   install a specific release (default: latest)
-#    --prefix  /path    override install prefix    (default: /usr/local)
-#    --binary-only      skip .deb/.dmg, install bare binary only
-#    --uninstall        remove vault from this system
-#
-#  Environment:
-#    PREFIX=$HOME/.local   user-only install, no sudo needed
+#  One-liner Uninstallation (Using your preferred syntax):
+#    curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -- uninstall
+#    OR: curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -s -- --uninstall
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -25,10 +20,11 @@ SHARE_DIR="$PREFIX/share"
 DESKTOP_DIR="$SHARE_DIR/applications"
 VERSION=""
 BINARY_ONLY=false
+UNINSTALL=false
 
 # ── colours ───────────────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput &>/dev/null && tput colors &>/dev/null; then
-    BOLD='\033[1m'; GREEN='\033;32m'; YELLOW='\033[1;33m'
+    BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
     RED='\033[0;31m'; CYAN='\033[0;36m'; DIM='\033[2m'; RESET='\033[0m'
 else
     BOLD=''; GREEN=''; YELLOW=''; RED=''; CYAN=''; DIM=''; RESET=''
@@ -40,24 +36,24 @@ warn()   { printf "${YELLOW}  ! %s${RESET}\n" "$*"; }
 die()    { printf "${RED}   ✗ error:${RESET} %s\n" "$*" >&2; exit 1; }
 header() { printf "\n${BOLD}${CYAN}%s${RESET}\n" "$*"; }
 
-# ── parse args ────────────────────────────────────────────────────────────────
+# ── parse arguments (handles stdin pipe flags safely) ─────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --uninstall)    UNINSTALL=true;     shift ;;
-        --binary-only)  BINARY_ONLY=true;    shift ;;
-        --version|-v)   VERSION="$2";         shift 2 ;;
-        --prefix)       PREFIX="$2"
-                        BIN_DIR="$PREFIX/bin"
-                        SHARE_DIR="$PREFIX/share"
-                        DESKTOP_DIR="$SHARE_DIR/applications"
-                        shift 2 ;;
+        --uninstall|uninstall) UNINSTALL=true; shift ;;
+        --binary-only)         BINARY_ONLY=true; shift ;;
+        --version|-v)          VERSION="$2"; shift 2 ;;
+        --prefix)
+            PREFIX="$2"
+            BIN_DIR="$PREFIX/bin"
+            SHARE_DIR="$PREFIX/share"
+            DESKTOP_DIR="$SHARE_DIR/applications"
+            shift 2 ;;
         --help|-h)
-            sed -n '3,12p' "$0" | sed 's/^# \?//'
+            printf "Vault Locker Installer\nOptions:\n  uninstall       Remove vault from system\n  --binary-only   Install bare binary executable only\n  --version <v>   Install explicit version\n"
             exit 0 ;;
-        *)  die "Unknown argument: $1 (try --help)" ;;
+        *) die "Unknown argument passed: $1" ;;
     esac
 done
-UNINSTALL="${UNINSTALL:-false}"
 
 # ── detect OS ─────────────────────────────────────────────────────────────────
 OS="$(uname -s)"
@@ -66,7 +62,7 @@ ARCH="$(uname -m)"
 case "$OS" in
     Linux)  PLATFORM="linux";  EXT="tar.gz" ;;
     Darwin) PLATFORM="macos";  EXT="tar.gz" ;;
-    *)      die "Unsupported OS '$OS'. On Windows build from source." ;;
+    *)      die "Unsupported OS '$OS'." ;;
 esac
 
 case "$ARCH" in
@@ -86,9 +82,9 @@ setup_sudo() {
     if [[ ! -d "$BIN_DIR" ]] || [[ ! -w "$BIN_DIR" ]]; then
         if command -v sudo &>/dev/null; then
             SUDO="sudo"
-            info "sudo will be used to write to $BIN_DIR"
+            info "sudo access will be initialized to modify protected system directories"
         else
-            die "Cannot write to $BIN_DIR. Run as root, use sudo, or set PREFIX to a writable path:\n    PREFIX=\$HOME/.local bash install.sh"
+            die "Cannot write to or modify $BIN_DIR. Run as root or use a writable PREFIX."
         fi
     fi
 }
@@ -99,15 +95,39 @@ elif command -v wget &>/dev/null; then DL="wget -qO-";  DL_O="wget --progress=ba
 else die "curl or wget is required. Install one and re-run."
 fi
 
-# ── uninstall ─────────────────────────────────────────────────────────────────
+# ── uninstallation implementation loop ────────────────────────────────────────
 if $UNINSTALL; then
     header "Uninstalling vault"
     setup_sudo
-    $SUDO rm -f "$BIN_DIR/$APP"
-    $SUDO rm -f "$DESKTOP_DIR/$APP.desktop"
-    [[ "$PLATFORM" == "macos" ]] && $SUDO rm -rf "/Applications/vault.app" && say "Removed /Applications/vault.app"
-    command -v update-desktop-database &>/dev/null && $SUDO update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
-    say "vault uninstalled cleanly."
+
+    # 1. Clean up Debian Package deployments if they exist
+    if [[ "$PLATFORM" == "linux" ]]; then
+        if command -v dpkg &>/dev/null && dpkg -s "$APP" &>/dev/null; then
+            say "Found active .deb installation. Purging package registry..."
+            if [[ -w /usr/bin ]]; then dpkg -r "$APP"; else sudo dpkg -r "$APP"; fi
+        fi
+    fi
+
+    # 2. Clean up manual custom binary placements
+    if [[ -f "$BIN_DIR/$APP" ]]; then
+        $SUDO rm -f "$BIN_DIR/$APP"
+        say "Removed binary tracking file: $BIN_DIR/$APP"
+    fi
+
+    # 3. Clean up Linux desktop hooks
+    if [[ -f "$DESKTOP_DIR/$APP.desktop" ]]; then
+        $SUDO rm -f "$DESKTOP_DIR/$APP.desktop"
+        say "Removed desktop utility layout: $DESKTOP_DIR/$APP.desktop"
+        command -v update-desktop-database &>/dev/null && $SUDO update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+    fi
+
+    # 4. Clean up macOS applications
+    if [[ "$PLATFORM" == "macos" ]] && [[ -d "/Applications/vault.app" ]]; then
+        $SUDO rm -rf "/Applications/vault.app"
+        say "Purged application container bundle -> /Applications/vault.app"
+    fi
+
+    say "vault uninstalled cleanly from your system context."
     exit 0
 fi
 
@@ -150,8 +170,7 @@ download_and_verify() {
         else warn "No sha256sum/shasum — skipping checksum."; skip=true; fi
 
         if ! $skip; then
-            [[ "$expected" == "$actual" ]] || \
-                die "Checksum mismatch!\n  expected: $expected\n  got:      $actual"
+            [[ "$expected" == "$actual" ]] || die "Checksum mismatch!"
             info "✓ Checksum verified (${actual:0:16}…)"
         fi
     fi
@@ -164,7 +183,6 @@ if [[ "$PLATFORM" == "linux" ]]; then
     DEB_NAME="vault-${VERSION}-linux-x86_64.deb"
     DEB_URL="$BASE_URL/$DEB_NAME"
 
-    # Auto-detect fallback options
     USE_DEB=false
     if ! $BINARY_ONLY && command -v dpkg &>/dev/null; then
         if curl -fsIo /dev/null "$DEB_URL" 2>/dev/null || wget -q --spider "$DEB_URL" 2>/dev/null; then
@@ -178,11 +196,7 @@ if [[ "$PLATFORM" == "linux" ]]; then
         download_and_verify "$DEB_URL" "$DEB_PATH" "$DEB_URL.sha256"
 
         say "Running system installation package logic…"
-        if [[ -w /usr/bin ]]; then
-            dpkg -i "$DEB_PATH"
-        else
-            sudo dpkg -i "$DEB_PATH"
-        fi
+        if [[ -w /usr/bin ]]; then dpkg -i "$DEB_PATH"; else sudo dpkg -i "$DEB_PATH"; fi
         say "vault $VERSION deployed using native package constraints."
         command -v update-desktop-database &>/dev/null && { sudo update-desktop-database /usr/share/applications 2>/dev/null || true; }
     else
@@ -299,7 +313,7 @@ if ! command -v vault &>/dev/null 2>&1; then
 fi
 
 echo ""
-printf "${GREEN}  ✓ vault ${VERSION} successfully compiled & deployed.${RESET}\n"
+printf "${GREEN}  ✓ vault ${VERSION} successfully configured & deployed.${RESET}\n"
 echo ""
-printf "  ${CYAN}Execute:${RESET}    vault\n"
+printf "  ${CYAN}Uninstall:${RESET}  curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -- uninstall\n"
 echo ""
