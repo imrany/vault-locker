@@ -1,92 +1,90 @@
-# Vault Locker 🦀🔒
+# 🦀 Vault Locker TUI: The High-Throughput Folder Fortress! 🔒⚡
 
-`vault_locker` is a lightweight, blazing-fast Command Line Interface (CLI) tool built in Rust to safely encrypt and decrypt local directories. It protects your sensitive files by recursively walking through folders and encrypting individual files using military-grade **AES-256-GCM** encryption.
+Welcome to **Vault Locker TUI**—an industrial-grade, multi-threaded Command Line Interface & Terminal User Interface utility built entirely in Rust. Securing directories containing massive quantities of files or raw gigabytes of data doesn't have to mean watching a frozen terminal. 
 
-## 🚀 Features
+This application couples a slick asynchronous frame engine built on **Ratatui** and **Crossterm** with a high-throughput **Tokio runtime**, distributing encryption workloads across worker pools running concurrent cryptographic tasks simultaneously. 
 
-* **Secure Key Derivation:** Uses the **Argon2** password hashing algorithm to safely stretch your plain-text password into a cryptographically secure 32-byte encryption key.
-* **Strong Encryption:** Implements authenticated encryption using **AES-256-GCM**, ensuring both confidentiality and integrity (tamper-proofing) of your files.
-* **Recursive Directory Walking:** Traverses nested folders flawlessly using the efficient `walkdir` crate.
-* **In-Place Modification:** Replaces vulnerable files with their encrypted `.enc` counterparts instantly, removing unencrypted traces from your filesystem.
-
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// FILE FORMAT (encrypted)
-// ┌──────────────┬───────────────────────────────┬──────────┬────────────────┐
-// │ name_len: u32│ original_filename (UTF-8 bytes)│ nonce 12B│  ciphertext    │
-// └──────────────┴───────────────────────────────┴──────────┴────────────────┘
-//
-// Encrypted files are stored as <16-hex-random>.enc  — no information about
-// the original name leaks from the filesystem.  The original name is stored
-// inside the ciphertext so it is recovered atomically on decryption.
-//
-// ─────────────────────────────────────────────────────────────────────────────
-
-## 🛠️ Architecture: How It Works
-
-1.  **Key Derivation:** Your password + a static unique salt are fed into `Argon2`, producing a 256-bit key.
-2.  **Encryption Cycle:** * Generates a unique 12-byte random **Nonce** for every single file.
-    * Encrypts the file contents.
-    * Prepends the 12-byte Nonce to the encrypted payload and writes it out as a `.enc` file.
-    * Safely removes the original raw file.
-3.  **Decryption Cycle:**
-    * Reads the first 12 bytes of the `.enc` file to extract the Nonce.
-    * Decrypts the remainder of the file using the derived key.
-    * Restores the original file name and extension, purging the encrypted copy.
+Your files are transformed securely into scrambled byte blocks using authenticated **AES-256-GCM** encryption and brute-force resistant **Argon2** key-stretching, all while rendering live data logs, bandwidth numbers, and responsive progress metrics in real time.
 
 
-## 📋 Prerequisites
+## 🕹️ Dashboard Experience
 
-To compile and run this project, you need the Rust toolchain installed on your Ubuntu system. If you don't have it yet, install it via `rustup`:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf [https://sh.rustup.rs](https://sh.rustup.rs) | sh
-source $HOME/.cargo/env
+```text
+  🛡   VAULT LOCKER ────────────────────────────────────────────────────────
+ ┌── Select Folder ─────────────────────┐┌── Folder Info ──────────────────┐
+ │ ▶ FolderPicker                       ││                                 │
+ │   bashadi-agency                     ││   Path     ./FolderPicker       │
+ │   TaskSentinel                       ││   Files    1,420 (0 encrypted)  │
+ │   boot                         🔒    ││   Status   🔒 Vault exists     │
+ │                                      ││   Workers  8 concurrent tasks   │
+ └──────────────────────────────────────┘└─────────────────────────────────┘
+ ┌── Live Processing Progress ─────────────────────────────────────────────┐
+ │ ████████████████████████████████████████████████░░░░░░░░░░░ [ 81% ]     │
+ └─────────────────────────────────────────────────────────────────────────┘
+  ↑↓ navigate   Enter: select   Esc: quit
 
 ```
 
-## 📦 Installation & Setup
 
-1. Clone or navigate to your project directory:
+## 🚀 Engine Architecture & Performance Layout
+
+Vault Locker handles file encryption using an asynchronous, event-driven pattern designed for modern multi-core storage architecture:
+
+### 1. Multi-Threaded Async Worker Pools
+
+* **Tokio Pipeline Architecture:** The application scans target nodes recursively using `WalkDir`. Instead of a linear loop, file items are dispatched over an asynchronous job cluster bounded by a strict allocation limit (`CONCURRENCY = 8`).
+* **Non-Blocking Channel Synchronization:** Workers pass performance telemetry up to the visual thread via an unbounded Single-Consumer Multi-Producer (`mpsc::unbounded_channel`) ring. The UI loops every `50ms` (`TICK_RATE`), draining the event pipe to update indicators without blocking file system operations.
+
+### 2. File Obfuscation & Envelope Metadata Format
+
+* **Cryptographic Name Shuffling:** To prevent side-channel information exposure via structural path leakage, the original directory architecture is flattened. File targets inside a folder have their paths randomized using a high-entropy 16-byte hex generator:
+
+$$\text{Target path} \longrightarrow \text{rand\_hex}(16) + \text{".enc"}$$
+
+
+* **Envelope Format:** Files are encrypted with individual 12-byte initialization vectors (**Nonces**). The metadata needed to safely reconstruct the file structure later is packed directly into the binary file envelope before the encrypted ciphertext:
+```text
+┌──────────────────┬─────────────────────┬─────────────┬────────────────────────┐
+│ Name Len (4B LE) │  Original Filename  │ Nonce (12B) │  Encrypted Ciphertext  │
+└──────────────────┴─────────────────────┴─────────────┴────────────────────────┘
+
+```
+
+
+
+### 3. Permanent Directory Binding Lock
+
+* When a folder structure is locked for the first time, an immutable `.vault_lock` state signature is written directly into its root path containing a calculated Argon2 metadata signature.
+* Any consecutive manipulation attempts verify the password against this block using strict validation rules. **The password cannot be modified or updated**, preventing malicious tampering.
+
+
+## 🛠️ Compilation & Local Deployment
+
+Ensure you have the latest stable Rust toolchain configured on your Linux machine (`Ubuntu 22.04 LTS` or higher recommended).
+
+1. Move directly into your current workspace folder:
 ```bash
 cd vault_locker
 
 ```
 
 
-2. Build the project in release mode for maximum performance:
+2. Instruct `cargo` to run profile optimizations, layout flattening, and dead-code stripping during compilation:
 ```bash
 cargo build --release
 
 ```
 
 
-The compiled binary will be available at `./target/release/vault_locker`.
-
-## 💻 Usage
-
-Run the binary using Cargo:
-
+The high-performance compiled binary container will generate inside `./target/release/vault_locker`.
+3. Launch your dashboard:
 ```bash
-cargo run
+cargo run --release
 
 ```
 
-### Step-by-Step Prompt Flow:
+## 🕵️‍♂️ TARGET CHALLENGE: Operation Boot Sector!
 
-1. **Target Folder:** Provide the absolute or relative path to the folder you want to secure (e.g., `/home/user/Documents/SecretFolder`).
-2. **Password:** Input your secure passphrase.
-3. **Action:** * Enter `1` to **Encrypt (Lock)** the folder.
-* Enter `2` to **Decrypt (Unlock)** the folder.
+Are your cryptographic credentials working correctly? Let's verify the operational capacity of your build with a data restoration exercise.
 
-
-
-> ⚠️ **Important Note:** Make sure you use the *exact* same password to decrypt the folder that you used to encrypt it. If the password differs by even a single character, decryption will fail to prevent unauthorized access.
-
-
-## 🛡️ Security Disclaimer
-
-This tool is designed for educational and personal use.
-
-* **Backup Your Data:** Always test this tool on a backup or a dummy folder containing non-critical data before running it on production files.
-* **Hardcoded Salt:** This implementation uses a static `STATIC_SALT`. For an enterprise-grade environment, it is highly recommended to generate random salts per file/session and append them to the file headers.
+See [Challenge](./boot/challenge.md)

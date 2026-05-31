@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. Linux Compilation Pipeline
+  # ──────────────────────────────────────────────────────────────────────────
+  build-linux:
+    name: Build · Linux Architecture
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable toolchain)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add compilation target
+        run: rustup target add x86_64-unknown-linux-gnu
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libgdk-pixbuf2.0-dev \
+            libatk1.0-dev \
+            libxdo-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            pkg-config
+
+      - name: Configure Cargo Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~ ~/.cargo/git
+            target
+          key: linux-x86_64-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-x86_64-cargo-
+
+      - name: Compile Release Binaries
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Bundle Archive package (.tar.gz)
+        run: |
+          cd target/x86_64-unknown-linux-gnu/release
+          tar czf \
+            ../../../vault-linux-${{ github.ref_name }}.tar.gz \
+            vault
+
+      - name: Generate Checksum signatures
+        run: |
+          shasum -a 256 "vault-linux-${{ github.ref_name }}.tar.gz" \
+            > "vault-linux-${{ github.ref_name }}.tar.gz.sha256"
+
+      - name: Cache Build Assets for Packager
+        uses: actions/upload-artifact@v4
+        with:
+          name: vault-linux-binary-${{ github.ref_name }}
+          path: |
+            vault-linux-${{ github.ref_name }}.tar.gz
+            vault-linux-${{ github.ref_name }}.tar.gz.sha256
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. Linux Installer Package Generation (.deb via cargo-deb)
+  # ──────────────────────────────────────────────────────────────────────────
+  installer-deb:
+    name: Package · Debian (.deb) Distribution
+    needs: build-linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install System dependencies + ImageMagick
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libgdk-pixbuf2.0-dev \
+            libatk1.0-dev \
+            libxdo-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            imagemagick \
+            pkg-config
+
+      - name: Install Native Rust environment
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deb packaging engine
+        run: cargo install cargo-deb --locked
+
+      - name: Inject package allocation metadata
+        shell: bash
+        run: |
+          cat >> Cargo.toml << 'TOML'
+
+          [package.metadata.deb]
+          maintainer     = "Imrany <imranmat254@gmail.com>"
+          copyright      = "2025, Imrany"
+          license-file   = ["LICENSE", "0"]
+          extended-description = "vault lets you encrypt directories using secure AES-256-GCM configurations."
+          depends        = "$auto, libgtk-3-0, libxdo3, libx11-6"
+          section        = "utils"
+          priority       = "optional"
+          assets = [
+            ["target/release/vault", "usr/local/bin/", "755"],
+            ["vault.desktop", "usr/share/applications/", "644"],
+            ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/vault.png", "644"],
+            ["README.md", "usr/share/doc/vault/", "644"],
+          ]
+          TOML
+
+      - name: Scale Multi-resolution application icons
+        run: |
+          mkdir -p assets/icons
+          for size in 16 32 48 64 128; do
+            convert assets/icon.png -resize "${size}x${size}" "assets/icons/vault_${size}.png"
+          done
+
+      - name: Build Application workspace (Pre-Package requirement)
+        run: cargo build --release
+
+      - name: Compile Debian Installer payload
+        run: cargo deb
+
+      - name: Standardize Installer naming
+        run: |
+          DEB_FILE=$(ls target/debian/*.deb | head -1)
+          cp "$DEB_FILE" "vault-${{ github.ref_name }}-linux-x86_64.deb"
+
+      - name: Calculate Package Checksums
+        run: |
+          sha256sum "vault-${{ github.ref_name }}-linux-x86_64.deb" \
+            > "vault-${{ github.ref_name }}-linux-x86_64.deb.sha256"
+
+      - name: Cache Installer Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-deb-${{ github.ref_name }}
+          path: |
+            vault-${{ github.ref_name }}-linux-x86_64.deb
+            vault-${{ github.ref_name }}-linux-x86_64.deb.sha256
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 3. Publish Deployment Matrix to GitHub Releases
+  # ──────────────────────────────────────────────────────────────────────────
+  publish:
+    name: Deployment · Publish Release Assets
+    needs: [build-linux, installer-deb]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pull Core Binary Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: vault-linux-binary-${{ github.ref_name }}
+          path: dist
+
+      - name: Pull Debian Installer Assets
+        uses: actions/download-artifact@v4
+        with:
+          name: installer-deb-${{ github.ref_name }}
+          path: dist
+
+      - name: Generate Github Release Pipeline Node
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/vault-linux-${{ github.ref_name }}.tar.gz
+            dist/vault-linux-${{ github.ref_name }}.tar.gz.sha256
+            dist/vault--${{ github.ref_name }}-linux-x86_64.deb
+            dist/vault-${{ github.ref_name }}-linux-x86_64.deb.sha256
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

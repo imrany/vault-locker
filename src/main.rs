@@ -675,14 +675,10 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
     let title = Paragraph::new(Line::from(vec![
         Span::styled("  🛡  ", Style::default().fg(Color::Rgb(255, 200, 50))),
         Span::styled(
-            "VAULT",
+            "VAULT LOCKER",
             Style::default()
                 .fg(Color::Rgb(255, 200, 50))
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "  —  AES-256-GCM  ·  Tokio parallel  ·  obfuscated filenames",
-            Style::default().fg(Color::Rgb(90, 100, 125)),
         ),
     ]))
     .block(
@@ -696,10 +692,10 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
 
 fn render_footer(f: &mut ratatui::Frame, area: Rect, screen: Screen) {
     let hints = match screen {
-        Screen::FolderPicker => " ↑↓  navigate   Enter  select   Esc  quit",
-        Screen::PasswordEntry => " Type password   Tab  show/hide   Enter  confirm   Esc  quit",
-        Screen::ConfirmPassword => " Confirm password   Tab  show/hide   BackTab  back   Esc  quit",
-        Screen::ActionPicker => " ←→  choose action   Enter  run   BackTab  back   Esc  quit",
+        Screen::FolderPicker => " ↑↓  navigate   Enter: select   Esc: quit",
+        Screen::PasswordEntry => " Type password   Tab: show/hide   Enter: confirm   Esc: quit",
+        Screen::ConfirmPassword => " Confirm password   Tab: show/hide   BackTab: back   Esc: quit",
+        Screen::ActionPicker => " ←→  choose action   Enter: run   BackTab: back   Esc: quit",
         Screen::Processing => " Processing in parallel…  please wait",
         Screen::Done => " Enter / q  to exit",
     };
