@@ -116,7 +116,7 @@ If you need to completely remove Vault Locker, its desktop metadata layers, and 
 ### One-Liner Uninstallation Script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -- uninstall
+curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -s -- uninstall
 ```
 
 ### Manual Package Clean-up Commands

@@ -7,8 +7,7 @@
 #    curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash
 #
 #  One-liner Uninstallation (Using your preferred syntax):
-#    curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -- uninstall
-#    OR: curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -s -- --uninstall
+#    curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -s -- uninstall
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -315,5 +314,5 @@ fi
 echo ""
 printf "${GREEN}  ✓ vault ${VERSION} successfully configured & deployed.${RESET}\n"
 echo ""
-printf "  ${CYAN}Uninstall:${RESET}  curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -- uninstall\n"
+printf "  ${CYAN}Uninstall:${RESET}  curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main/scripts/install.sh | bash -s -- uninstall\n"
 echo ""
