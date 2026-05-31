@@ -68,20 +68,20 @@ If you prefer running sandboxed manual packages, fetch the target elements manua
 
 ```bash
 # Fetch the compiled package distribution binary map
-wget https://github.com/imrany/vault-locker/releases/latest/download/vault-v0.3.0-linux-x86_64.deb
+wget https://github.com/imrany/vault-locker/releases/latest/download/vault-v0.4.0-linux-x86_64.deb
 
 # Install package through standard packaging engines
-sudo apt install ./vault-v0.3.0-linux-x86_64.deb
+sudo apt install ./vault-v0.4.0-linux-x86_64.deb
 ```
 
 #### Option B: Standalone Compressed Tarball (`.tar.gz`)
 
 ```bash
 # Download the high-speed static production container binary layout
-wget https://github.com/imrany/vault-locker/releases/latest/download/vault-linux-v0.3.0.tar.gz
+wget https://github.com/imrany/vault-locker/releases/latest/download/vault-linux-v0.4.0.tar.gz
 
 # Extract context elements and bind execute privileges to your local binaries path
-tar -xzvf vault-linux-v0.3.0.tar.gz
+tar -xzvf vault-linux-v0.4.0.tar.gz
 sudo mv vault /usr/local/bin/vault
 ```
 
@@ -107,6 +107,19 @@ The high-performance compiled binary container will generate inside `./target/re
 
 ```bash
 cargo run --release
+```
+
+4. Once compiled, you can run it directly using `step 3 above` or using your specified parameters:
+
+```Bash
+# Encrypting a directory
+cargo run -- encrypt ./my_secrets --password MySuperSecretPassword123
+```
+
+
+```bash
+# Decrypting a directory
+cargo run -- decrypt ./my_secrets --password MySuperSecretPassword123
 ```
 
 ## 🧹 Clean Uninstallation
