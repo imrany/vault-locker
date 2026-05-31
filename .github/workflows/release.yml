@@ -50,7 +50,7 @@ jobs:
         with:
           path: |
             ~/.cargo/registry
-            ~ ~/.cargo/git
+            ~/.cargo/git
             target
           key: linux-x86_64-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: linux-x86_64-cargo-
@@ -90,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install System dependencies + ImageMagick
+      - name: Install System dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
@@ -108,7 +108,6 @@ jobs:
             libxcb-xfixes0-dev \
             libxkbcommon-dev \
             libwayland-dev \
-            imagemagick \
             pkg-config
 
       - name: Install Native Rust environment
@@ -133,17 +132,9 @@ jobs:
           assets = [
             ["target/release/vault", "usr/local/bin/", "755"],
             ["vault.desktop", "usr/share/applications/", "644"],
-            ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/vault.png", "644"],
             ["README.md", "usr/share/doc/vault/", "644"],
           ]
           TOML
-
-      - name: Scale Multi-resolution application icons
-        run: |
-          mkdir -p assets/icons
-          for size in 16 32 48 64 128; do
-            convert assets/icon.png -resize "${size}x${size}" "assets/icons/vault_${size}.png"
-          done
 
       - name: Build Application workspace (Pre-Package requirement)
         run: cargo build --release
@@ -197,7 +188,7 @@ jobs:
           files: |
             dist/vault-linux-${{ github.ref_name }}.tar.gz
             dist/vault-linux-${{ github.ref_name }}.tar.gz.sha256
-            dist/vault--${{ github.ref_name }}-linux-x86_64.deb
+            dist/vault-${{ github.ref_name }}-linux-x86_64.deb
             dist/vault-${{ github.ref_name }}-linux-x86_64.deb.sha256
           draft: false
           prerelease: false

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=0.3.0
+Name=vault
+GenericName=File encryption
+Comment=Fast, file encrypted
+Exec=vault
+Icon=vault
+Terminal=false
+Categories=Security;FileEncrytion;Utility;
+Keywords=file;encryption;security;
+StartupNotify=true
+StartupWMClass=vault

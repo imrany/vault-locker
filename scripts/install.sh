@@ -23,13 +23,12 @@ PREFIX="${PREFIX:-/usr/local}"
 BIN_DIR="$PREFIX/bin"
 SHARE_DIR="$PREFIX/share"
 DESKTOP_DIR="$SHARE_DIR/applications"
-ICON_DIR="$SHARE_DIR/icons/hicolor"
 VERSION=""
 BINARY_ONLY=false
 
 # ── colours ───────────────────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput &>/dev/null && tput colors &>/dev/null; then
-    BOLD='\033[1m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+    BOLD='\033[1m'; GREEN='\033;32m'; YELLOW='\033[1;33m'
     RED='\033[0;31m'; CYAN='\033[0;36m'; DIM='\033[2m'; RESET='\033[0m'
 else
     BOLD=''; GREEN=''; YELLOW=''; RED=''; CYAN=''; DIM=''; RESET=''
@@ -38,20 +37,19 @@ fi
 say()    { printf "${GREEN}==>${RESET}${BOLD} %s${RESET}\n" "$*"; }
 info()   { printf "    ${DIM}%s${RESET}\n" "$*"; }
 warn()   { printf "${YELLOW}  ! %s${RESET}\n" "$*"; }
-die()    { printf "${RED}  ✗ error:${RESET} %s\n" "$*" >&2; exit 1; }
+die()    { printf "${RED}   ✗ error:${RESET} %s\n" "$*" >&2; exit 1; }
 header() { printf "\n${BOLD}${CYAN}%s${RESET}\n" "$*"; }
 
 # ── parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --uninstall)    UNINSTALL=true;      shift ;;
+        --uninstall)    UNINSTALL=true;     shift ;;
         --binary-only)  BINARY_ONLY=true;    shift ;;
         --version|-v)   VERSION="$2";         shift 2 ;;
         --prefix)       PREFIX="$2"
                         BIN_DIR="$PREFIX/bin"
                         SHARE_DIR="$PREFIX/share"
                         DESKTOP_DIR="$SHARE_DIR/applications"
-                        ICON_DIR="$SHARE_DIR/icons/hicolor"
                         shift 2 ;;
         --help|-h)
             sed -n '3,12p' "$0" | sed 's/^# \?//'
@@ -68,7 +66,7 @@ ARCH="$(uname -m)"
 case "$OS" in
     Linux)  PLATFORM="linux";  EXT="tar.gz" ;;
     Darwin) PLATFORM="macos";  EXT="tar.gz" ;;
-    *)      die "Unsupported OS '$OS'. On Windows use: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
+    *)      die "Unsupported OS '$OS'. On Windows build from source." ;;
 esac
 
 case "$ARCH" in
@@ -107,12 +105,9 @@ if $UNINSTALL; then
     setup_sudo
     $SUDO rm -f "$BIN_DIR/$APP"
     $SUDO rm -f "$DESKTOP_DIR/$APP.desktop"
-    for size in 16 32 48 64 128 256; do
-        $SUDO rm -f "$ICON_DIR/${size}x${size}/apps/$APP.png"
-    done
     [[ "$PLATFORM" == "macos" ]] && $SUDO rm -rf "/Applications/vault.app" && say "Removed /Applications/vault.app"
     command -v update-desktop-database &>/dev/null && $SUDO update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
-    say "vault uninstalled."
+    say "vault uninstalled cleanly."
     exit 0
 fi
 
@@ -169,6 +164,7 @@ if [[ "$PLATFORM" == "linux" ]]; then
     DEB_NAME="vault-${VERSION}-linux-x86_64.deb"
     DEB_URL="$BASE_URL/$DEB_NAME"
 
+    # Auto-detect fallback options
     USE_DEB=false
     if ! $BINARY_ONLY && command -v dpkg &>/dev/null; then
         if curl -fsIo /dev/null "$DEB_URL" 2>/dev/null || wget -q --spider "$DEB_URL" 2>/dev/null; then
@@ -188,9 +184,7 @@ if [[ "$PLATFORM" == "linux" ]]; then
             sudo dpkg -i "$DEB_PATH"
         fi
         say "vault $VERSION deployed using native package constraints."
-
         command -v update-desktop-database &>/dev/null && { sudo update-desktop-database /usr/share/applications 2>/dev/null || true; }
-        command -v gtk-update-icon-cache &>/dev/null && { sudo gtk-update-icon-cache -qtf /usr/share/icons/hicolor 2>/dev/null || true; }
     else
         setup_sudo
         ARCHIVE="vault-linux-${VERSION}.tar.gz"
@@ -206,29 +200,13 @@ if [[ "$PLATFORM" == "linux" ]]; then
         say "Binary targets assigned to path -> $BIN_DIR/vault"
 
         DESKTOP_URL="https://raw.githubusercontent.com/$REPO/main/vault.desktop"
-        ICON_URL="https://raw.githubusercontent.com/$REPO/main/assets/icon.png"
         $DL_O "$TMPDIR_WORK/vault.desktop" "$DESKTOP_URL" 2>/dev/null || true
-        $DL_O "$TMPDIR_WORK/icon.png" "$ICON_URL" 2>/dev/null || true
 
         if [[ -f "$TMPDIR_WORK/vault.desktop" ]]; then
             $SUDO mkdir -p "$DESKTOP_DIR"
             $SUDO install -Dm644 "$TMPDIR_WORK/vault.desktop" "$DESKTOP_DIR/vault.desktop"
             say "Sourced desktop shortcut to system path -> $DESKTOP_DIR/vault.desktop"
-        fi
-
-        if [[ -f "$TMPDIR_WORK/icon.png" ]]; then
-            if command -v convert &>/dev/null; then
-                for size in 16 32 48 64 128 256; do
-                    $SUDO mkdir -p "$ICON_DIR/${size}x${size}/apps"
-                    convert "$TMPDIR_WORK/icon.png" -resize "${size}x${size}" "$TMPDIR_WORK/icon_${size}.png" 2>/dev/null
-                    $SUDO install -Dm644 "$TMPDIR_WORK/icon_${size}.png" "$ICON_DIR/${size}x${size}/apps/vault.png"
-                done
-            else
-                $SUDO mkdir -p "$ICON_DIR/256x256/apps"
-                $SUDO install -Dm644 "$TMPDIR_WORK/icon.png" "$ICON_DIR/256x256/apps/vault.png"
-            fi
             command -v update-desktop-database &>/dev/null && $SUDO update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
-            command -v gtk-update-icon-cache &>/dev/null && $SUDO gtk-update-icon-cache -qtf "$ICON_DIR" 2>/dev/null || true
         fi
     fi
 fi
@@ -282,22 +260,6 @@ if [[ "$PLATFORM" == "macos" ]]; then
         mkdir -p "$APP_BUNDLE/Contents/Resources"
         cp "$TMPDIR_WORK/vault" "$APP_BUNDLE/Contents/MacOS/vault"
 
-        ICON_URL="https://raw.githubusercontent.com/$REPO/main/assets/icon.png"
-        $DL_O "$TMPDIR_WORK/icon.png" "$ICON_URL" 2>/dev/null || true
-        ICON_REF="vault"
-
-        if [[ -f "$TMPDIR_WORK/icon.png" ]] && command -v iconutil &>/dev/null && command -v sips &>/dev/null; then
-            ICONSET="$TMPDIR_WORK/vault.iconset"
-            mkdir -p "$ICONSET"
-            for size in 16 32 64 128 256 512; do
-                sips -z $size $size "$TMPDIR_WORK/icon.png" --out "$ICONSET/icon_${size}x${size}.png" &>/dev/null
-                sips -z $((size*2)) $((size*2)) "$TMPDIR_WORK/icon.png" --out "$ICONSET/icon_${size}x${size}@2x.png" &>/dev/null
-            done
-            iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/vault.icns"
-        elif [[ -f "$TMPDIR_WORK/icon.png" ]]; then
-            cp "$TMPDIR_WORK/icon.png" "$APP_BUNDLE/Contents/Resources/vault.png"
-        fi
-
         cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -309,7 +271,6 @@ if [[ "$PLATFORM" == "macos" ]]; then
     <key>CFBundleShortVersionString</key><string>$VER_NUM</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>vault</string>
-    <key>CFBundleIconFile</key><string>$ICON_REF</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSMinimumSystemVersion</key><string>10.14</string>
 </dict></plist>
