@@ -1,4 +1,4 @@
-# Vault Locker TUI 🔒⚡
+# Vault Locker 🔒⚡
 
 Welcome to **Vault Locker TUI**—an industrial-grade, multi-threaded Command Line Interface & Terminal User Interface utility built entirely in Rust. Securing directories containing massive quantities of files or raw gigabytes of data doesn't have to mean watching a frozen terminal.
 
