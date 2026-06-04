@@ -35,11 +35,15 @@ use tokio::{
 };
 use walkdir::WalkDir;
 
+mod utils;
+use utils::{generate_random_salt, get_config_path, get_or_create_salt};
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const LOCK_FILE_NAME: &str = ".vault_lock";
 const TICK_RATE: Duration = Duration::from_millis(50);
 const CONCURRENCY: usize = 8;
+pub const CONFIG_FILE_NAME: &str = ".vault_config";
 
 // ─── Worker ↔ UI message ──────────────────────────────────────────────────────
 
@@ -153,51 +157,6 @@ impl App {
 
     fn push_log(&mut self, icon: &'static str, text: String, color: Color) {
         self.log.push(LogEntry { icon, text, color });
-    }
-}
-
-// ─── Key & Config Management ──────────────────────────────────────────────────
-
-fn generate_random_salt() -> String {
-    let mut bytes = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-fn get_config_path() -> PathBuf {
-    let dev_path = PathBuf::from(".vault_config");
-    if dev_path.exists() {
-        return dev_path;
-    }
-
-    // Attempt to locate standard system environment variable keys
-    let home_var = std::env::var("HOME");
-
-    // ~/.config/vault_locker/.vault_config
-    match home_var {
-        Ok(home_dir) => {
-            let mut path = PathBuf::from(home_dir);
-            if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-                path.push(".config");
-                path.push("vault_locker");
-            }
-            let _ = std::fs::create_dir_all(&path);
-            path.push(".vault_config");
-            path
-        }
-        Err(_) => dev_path, // Fallback safely to current working directory
-    }
-}
-
-fn get_or_create_salt() -> io::Result<String> {
-    let config_path = get_config_path();
-    if config_path.exists() {
-        let salt = std::fs::read_to_string(config_path)?;
-        Ok(salt.trim().to_string())
-    } else {
-        let new_salt = generate_random_salt();
-        std::fs::write(config_path, &new_salt)?;
-        Ok(new_salt)
     }
 }
 

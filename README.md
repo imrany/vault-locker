@@ -54,7 +54,7 @@ Vault Locker handles file encryption using an asynchronous, event-driven pattern
 The system automatically senses its environment to resolve its operational layout using a cascading configuration lookup path:
 
 * **Development Mode:** Checks for a local `.vault_config` file directly in the current executing path context.
-* **Production Sandbox Fallback:** If absent, it safely shifts to system standard layout nodes (e.g., `~/.config/vault_locker/.vault_config`), building nested parent nodes cleanly without throwing environment faults.
+* **Production Sandbox Fallback:** If absent, it safely shifts to system standard layout nodes (e.g., `~/.config/vault_locker/.vault_config` or `%USERPROFILE%\.config\vault_locker\.vault_config` on windows ), building nested parent nodes cleanly without throwing environment faults.
 
 
 ## 🛠️ Local Engine Compilation & Development Build
