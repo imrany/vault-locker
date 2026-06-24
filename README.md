@@ -9,7 +9,7 @@ Files are transformed into scrambled byte blocks using authenticated **AES-256-G
 ## 🕹️ Dashboard Experience
 
 ```text
- 🛡  VAULT LOCKER  v0.5.0 ───────────────────────────────────────────────────────
+ 🛡  VAULT LOCKER  v0.5.1 ───────────────────────────────────────────────────────
  ┌── Select Folder ─────────────────────┐┌── Folder Info ──────────────────┐
  │ ▶ bashadi-agency                     ││                                 │
  │   TaskSentinel                       ││   Path    ./bashadi-agency      │
@@ -119,20 +119,20 @@ If you prefer running sandboxed manual packages, fetch the target elements manua
 
 ```bash
 # Fetch the compiled package distribution binary map
-wget https://github.com/imrany/vault-locker/releases/latest/download/vault-v0.5.0-linux-x86_64.deb
+wget https://github.com/imrany/vault-locker/releases/latest/download/vault-v0.5.1-linux-x86_64.deb
 
 # Install package through standard packaging engines
-sudo apt install ./vault-v0.5.0-linux-x86_64.deb
+sudo apt install ./vault-v0.5.1-linux-x86_64.deb
 ```
 
 #### Option B: Standalone Compressed Tarball (`.tar.gz`)
 
 ```bash
 # Download the high-speed static production container binary layout
-wget https://github.com/imrany/vault-locker/releases/latest/download/vault-linux-v0.5.0.tar.gz
+wget https://github.com/imrany/vault-locker/releases/latest/download/vault-linux-v0.5.1.tar.gz
 
 # Extract context elements and bind execute privileges to your local binaries path
-tar -xzvf vault-linux-v0.5.0.tar.gz
+tar -xzvf vault-linux-v0.5.1.tar.gz
 sudo mv vault /usr/local/bin/vault
 ```
 

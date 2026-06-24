@@ -6,6 +6,7 @@ use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
+use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
@@ -161,211 +162,217 @@ impl App {
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
+#[derive(Parser)]
+#[command(
+    version,
+    about = "Vault is a file encryption tool that encrypts and decrypts files."
+)]
+struct VaultArgs {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[arg(short, long, global = true)]
+    password: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Init,
+    Encrypt { folder_path: String },
+    Decrypt { folder_path: String },
+}
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-
-    // 1. Explicit Initialization Command
-    if args.len() == 2 && args[1] == "init" {
-        let new_salt = generate_random_salt();
-        std::fs::write(get_config_path(), &new_salt)?;
-        println!("Vault dynamic configurations initialized securely.");
-        println!("Generated system salt: {}", new_salt);
-        return Ok(());
-    }
-
-    // Load or lazily instantiate salt configuration
+    // Let clap handle structural validations and print errors/help automatically
+    let vault_args = VaultArgs::parse();
     let system_salt = get_or_create_salt()?;
 
-    // Route directly to headless layout execution if arguments are fed
-    if args.len() > 1 {
-        if args.len() < 5 {
-            println!("Usage:");
-            println!("  vault init");
-            println!("  vault encrypt <folder_path> --password <your_password>");
-            println!("  vault decrypt <folder_path> --password <your_password>");
-            std::process::exit(1);
-        }
-
-        let action = &args[1];
-        let folder_path = &args[2];
-        let password_flag = &args[3];
-        let password = &args[4];
-
-        if password_flag != "--password" {
-            eprintln!("Error: Missing parameter flag '--password'");
-            std::process::exit(1);
-        }
-
-        let folder = Path::new(folder_path);
-        if !folder.exists() {
-            eprintln!("Error: Target folder path '{}' does not exist", folder_path);
-            std::process::exit(1);
-        }
-
-        let lock_path = folder.join(LOCK_FILE_NAME);
-        let argon2 = Argon2::default();
-        let password_bytes = password.as_bytes();
-        let salt_param = SaltString::encode_b64(system_salt.as_bytes()).unwrap();
-
-        let hash_string = argon2
-            .hash_password(password_bytes, &salt_param)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
-            .to_string();
-
-        if lock_path.exists() {
-            let stored = std::fs::read_to_string(&lock_path)?;
-            let parsed = PasswordHash::new(&stored)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            if argon2.verify_password(password_bytes, &parsed).is_err() {
-                eprintln!("Error: Wrong password for this vault!");
-                std::process::exit(1);
-            }
-        } else if action == "decrypt" {
-            eprintln!("Error: No vault lock found — folder not encrypted");
-            std::process::exit(1);
-        } else {
-            std::fs::write(&lock_path, &hash_string)?;
-        }
-
-        let key = derive_key(&hash_string)?;
-        let encrypt = match action.as_str() {
-            "encrypt" => true,
-            "decrypt" => false,
-            _ => {
-                eprintln!("Error: Unknown action sub-command '{}'", action);
-                std::process::exit(1);
-            }
+    if let Some(command) = &vault_args.command {
+        // Enforce password presence up front for cryptographic commands
+        let password = match command {
+            Command::Init => "",
+            Command::Encrypt { .. } | Command::Decrypt { .. } => match &vault_args.password {
+                Some(p) => p.as_str(),
+                None => {
+                    eprintln!("Error: Missing parameter flag '--password' or '-p'");
+                    std::process::exit(1);
+                }
+            },
         };
 
-        println!("--- Headless Vault Engine Initialized ---");
-        println!("Target Folder : {}", folder.display());
-        println!("Concurrency   : {} tasks", CONCURRENCY);
-        println!("System Salt   : {}", system_salt);
-        // println!("Vault Config  : {}", get_config_path().display());
-
-        // Collect files
-        let files: Vec<PathBuf> = WalkDir::new(&folder)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file())
-            .filter(|e| {
-                let name = e.path().file_name().unwrap_or_default().to_string_lossy();
-                if name == LOCK_FILE_NAME {
-                    return false;
-                }
-                if encrypt {
-                    e.path().extension().map_or(true, |x| x != "enc")
-                } else {
-                    e.path().extension().map_or(false, |x| x == "enc")
-                }
-            })
-            .map(|e| e.path().to_path_buf())
-            .collect();
-
-        let total = files.len();
-        println!("Processing {} files...", total);
-
-        let active = Arc::new(Mutex::new(0usize));
-        let (tx, mut rx) = mpsc::unbounded_channel::<FileResult>();
-        let key_arc = Arc::new(key);
-
-        for path in files {
-            loop {
-                let count = *active.lock().unwrap();
-                if count < CONCURRENCY {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(2)).await;
+        // Execution path for CLI inputs
+        match command {
+            Command::Init => {
+                let new_salt = generate_random_salt();
+                std::fs::write(get_config_path(), &new_salt)?;
+                println!("Vault dynamic configurations initialized securely.");
+                println!("Generated system salt: {}", new_salt);
+                return Ok(());
             }
-            {
-                let mut count = active.lock().unwrap();
-                *count += 1;
-            }
-
-            let display = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let tx2 = tx.clone();
-            let key2 = Arc::clone(&key_arc);
-            let active2 = Arc::clone(&active);
-
-            tokio::spawn(async move {
-                let size = tokio::fs::metadata(&path)
-                    .await
-                    .map(|m| m.len())
-                    .unwrap_or(0);
-                let (ok, err_msg) = if encrypt {
-                    match encrypt_file(&path, &key2).await {
-                        Ok(_) => (true, None),
-                        Err(e) => (false, Some(e.to_string())),
-                    }
-                } else {
-                    match decrypt_file(&path, &key2).await {
-                        Ok(_) => (true, None),
-                        Err(e) => (false, Some(e.to_string())),
-                    }
-                };
-
-                {
-                    let mut count = active2.lock().unwrap();
-                    *count -= 1;
+            Command::Encrypt { folder_path } | Command::Decrypt { folder_path } => {
+                let folder = Path::new(folder_path);
+                if !folder.exists() {
+                    eprintln!("Error: Target folder path '{}' does not exist", folder_path);
+                    std::process::exit(1);
                 }
 
-                let _ = tx2.send(FileResult {
-                    display,
-                    size,
-                    ok,
-                    err: err_msg,
-                });
-            });
-        }
+                let encrypt = matches!(command, Command::Encrypt { .. });
+                let lock_path = folder.join(LOCK_FILE_NAME);
+                let argon2 = Argon2::default();
+                let password_bytes = password.as_bytes();
+                let salt_param = SaltString::encode_b64(system_salt.as_bytes()).unwrap();
 
-        drop(tx);
+                let hash_string = argon2
+                    .hash_password(password_bytes, &salt_param)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+                    .to_string();
 
-        let mut processed = 0;
-        let mut failed = 0;
-        let mut total_bytes = 0;
+                if lock_path.exists() {
+                    let stored = std::fs::read_to_string(&lock_path)?;
+                    let parsed = PasswordHash::new(&stored)
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                    if argon2.verify_password(password_bytes, &parsed).is_err() {
+                        eprintln!("Error: Wrong password for this vault!");
+                        std::process::exit(1);
+                    }
+                } else if !encrypt {
+                    eprintln!("Error: No vault lock found — folder not encrypted");
+                    std::process::exit(1);
+                } else {
+                    std::fs::write(&lock_path, &hash_string)?;
+                }
 
-        while let Some(r) = rx.recv().await {
-            processed += 1;
-            if r.ok {
-                total_bytes += r.size;
+                let key = derive_key(&hash_string)?;
+
+                println!("--- Headless Vault Engine Initialized ---");
+                println!("Target Folder : {}", folder.display());
+                println!("Concurrency   : {} tasks", CONCURRENCY);
+                println!("System Salt   : {}", system_salt);
+
+                // Collect files dynamically based on runtime mode
+                let files: Vec<PathBuf> = WalkDir::new(&folder)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_file())
+                    .filter(|e| {
+                        let name = e.path().file_name().unwrap_or_default().to_string_lossy();
+                        if name == LOCK_FILE_NAME {
+                            return false;
+                        }
+                        if encrypt {
+                            e.path().extension().map_or(true, |x| x != "enc")
+                        } else {
+                            e.path().extension().map_or(false, |x| x == "enc")
+                        }
+                    })
+                    .map(|e| e.path().to_path_buf())
+                    .collect();
+
+                let total = files.len();
+                println!("Processing {} files...", total);
+
+                let active = Arc::new(Mutex::new(0usize));
+                let (tx, mut rx) = mpsc::unbounded_channel::<FileResult>();
+                let key_arc = Arc::new(key);
+
+                for path in files {
+                    loop {
+                        let count = *active.lock().unwrap();
+                        if count < CONCURRENCY {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                    }
+                    {
+                        let mut count = active.lock().unwrap();
+                        *count += 1;
+                    }
+
+                    let display = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    let tx2 = tx.clone();
+                    let key2 = Arc::clone(&key_arc);
+                    let active2 = Arc::clone(&active);
+
+                    tokio::spawn(async move {
+                        let size = tokio::fs::metadata(&path)
+                            .await
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        let (ok, err_msg) = if encrypt {
+                            match encrypt_file(&path, &key2).await {
+                                Ok(_) => (true, None),
+                                Err(e) => (false, Some(e.to_string())),
+                            }
+                        } else {
+                            match decrypt_file(&path, &key2).await {
+                                Ok(_) => (true, None),
+                                Err(e) => (false, Some(e.to_string())),
+                            }
+                        };
+
+                        {
+                            let mut count = active2.lock().unwrap();
+                            *count -= 1;
+                        }
+
+                        let _ = tx2.send(FileResult {
+                            display,
+                            size,
+                            ok,
+                            err: err_msg,
+                        });
+                    });
+                }
+
+                drop(tx);
+
+                let mut processed = 0;
+                let mut failed = 0;
+                let mut total_bytes = 0;
+
+                while let Some(r) = rx.recv().await {
+                    processed += 1;
+                    if r.ok {
+                        total_bytes += r.size;
+                        println!(
+                            "  [{}/{}] Verified: {} ({})",
+                            processed,
+                            total,
+                            r.display,
+                            format_size(r.size, BINARY)
+                        );
+                    } else {
+                        failed += 1;
+                        eprintln!(
+                            "  [{}/{}] FAILED  : {} -> {}",
+                            processed,
+                            total,
+                            r.display,
+                            r.err.unwrap_or_default()
+                        );
+                    }
+                }
+
+                println!("\nOperation Summary Completed.");
                 println!(
-                    "  [{}/{}] Verified: {} ({})",
-                    processed,
-                    total,
-                    r.display,
-                    format_size(r.size, BINARY)
+                    "  Success: {} files ({})",
+                    processed - failed,
+                    format_size(total_bytes, BINARY)
                 );
-            } else {
-                failed += 1;
-                eprintln!(
-                    "  [{}/{}] FAILED  : {} -> {}",
-                    processed,
-                    total,
-                    r.display,
-                    r.err.unwrap_or_default()
-                );
+                if failed > 0 {
+                    println!("  Failure: {} files failed structurally", failed);
+                }
+                return Ok(());
             }
         }
-
-        println!("\nOperation Summary Completed.");
-        println!(
-            "  Success: {} files ({})",
-            processed - failed,
-            format_size(total_bytes, BINARY)
-        );
-        if failed > 0 {
-            println!("  Failure: {} files failed structurally", failed);
-        }
-        return Ok(());
     }
 
-    // Standard GUI fallback behavior when launched with no args
+    // ─── Standard GUI / TUI fallback behavior when launched with no args ──────
     terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -377,7 +384,6 @@ async fn main() -> io::Result<()> {
 
     terminal::disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
     result
 }
 
