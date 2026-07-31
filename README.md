@@ -11,8 +11,8 @@ Files are transformed into scrambled byte blocks using authenticated **AES-256-G
 ```text
  🛡  VAULT LOCKER  v0.5.1 ───────────────────────────────────────────────────────
  ┌── Select Folder ─────────────────────┐┌── Folder Info ──────────────────┐
- │ ▶ bashadi-agency                     ││                                 │
- │   TaskSentinel                       ││   Path    ./bashadi-agency      │
+ │ ▶ ProjectOne                         ││                                 │
+ │   TaskSentinel                       ││   Path    ./ProjectOne      │
  │   boot                         🔒    ││   Files   1,420 (0 encrypted)   │
  │                                      ││   Status  🔒 Vault exists       │
  │                                      ││   Workers 8 concurrent tasks    │
@@ -54,12 +54,12 @@ Vault Locker handles file encryption using an asynchronous, event-driven pattern
 The system automatically senses its environment to resolve its operational layout using a cascading configuration lookup path:
 
 * **Development Mode:** Checks for a local `.vault_config` file directly in the current executing path context.
-* **Production Sandbox Fallback:** If absent, it safely shifts to system standard layout nodes (e.g., `~/.config/vault_locker/.vault_config` or `%USERPROFILE%\.config\vault_locker\.vault_config` on windows ), building nested parent nodes cleanly without throwing environment faults.
+* **Production Sandbox Fallback:** If absent, it safely shifts to system standard layout nodes (e.g., `~/.config/vault_locker/.vault_config` or `%USERPROFILE%\.config\vault_locker\.vault_config` on windows or `$HOME/.config/vault_locker/.vault_config` on macOS), building nested parent nodes cleanly without throwing environment faults.
 
 
 ## 🛠️ Local Engine Compilation & Development Build
 
-If you are expanding the TUI dashboard layout configuration or rewriting target core crypto blocks, build your dependencies completely from the workspace source block. Ensure you have the latest stable Rust toolchain configured on your machine (`Ubuntu 22.04 LTS` or higher recommended).
+If you are expanding the TUI dashboard layout configuration or rewriting target core crypto blocks, build your dependencies completely from the workspace source block. Ensure you have the latest stable Rust toolchain configured on your machine.
 
 1. Move directly into your current workspace folder:
 
@@ -101,7 +101,7 @@ cargo run -- decrypt /path/to/target --password YourSecretPassphrase123
 
 ## ⚡ Quick Production Installation
 
-For modern standard Linux environments (`Ubuntu / Debian / Mint`), use our high-speed, authenticated delivery channels to get up and running instantly.
+For modern standard Linux and macOS environments (`Ubuntu / Debian / Mint / macOS`), use our high-speed, authenticated delivery channels to get up and running instantly.
 
 ### 1. Automated Script Installation (Recommended)
 
@@ -148,13 +148,13 @@ curl -fsSL https://raw.githubusercontent.com/imrany/vault-locker/refs/heads/main
 
 ### Manual Package Clean-up Commands
 
-* If installed via `.deb` package manager:
+- Linux (.deb install):
 
 ```bash
 sudo apt remove --purge vault
 ```
 
-* If installed via binary tarball layout:
+- Linux (Manual Tarball):
 
 ```bash
 sudo rm -f /usr/local/bin/vault
@@ -162,9 +162,10 @@ sudo rm -f /usr/share/applications/vault.desktop
 sudo rm -f ~/.config/vault_locker/.vault_config
 ```
 
+- macOS:
 
-## 🕵️‍♂️ TARGET CHALLENGE: Operation Boot Sector!
-
-Are your cryptographic credentials working correctly? Let's verify the operational capacity of your build with a data restoration exercise.
-
-See [Challenge](https://www.google.com/search?q=./boot/challenge.md)
+```bash
+sudo rm -f /usr/local/bin/vault
+sudo rm -f /usr/share/applications/vault.desktop
+sudo rm -f ~/.config/vault_locker/.vault_config
+```
